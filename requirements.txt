@@ -1,0 +1,8 @@
+flask
+python-dotenv
+langchain
+langchain-community
+langchain-openai
+langchain-text-splitters
+faiss-cpu
+pydantic

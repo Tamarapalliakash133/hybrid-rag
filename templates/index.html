@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RAG Chat</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: "Segoe UI", sans-serif;
+            background: #343541;
+            color: white;
+        }
+
+        .app {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            padding: 15px;
+            background: #202123;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h2 {
+            margin: 0;
+        }
+
+        /* Upload */
+        .upload {
+            display: flex;
+            gap: 10px;
+        }
+
+        .upload input {
+            color: white;
+        }
+
+        .upload button {
+            background: #10a37f;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            color: white;
+        }
+
+        /* Chat */
+        .chat-box {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .message {
+            display: flex;
+            margin-bottom: 15px;
+        }
+
+        .user {
+            justify-content: flex-end;
+        }
+
+        .bot {
+            justify-content: flex-start;
+        }
+
+        .bubble {
+            max-width: 65%;
+            padding: 12px 16px;
+            border-radius: 10px;
+            line-height: 1.5;
+            animation: fadeIn 0.2s ease-in;
+        }
+
+        .user .bubble {
+            background: #10a37f;
+        }
+
+        .bot .bubble {
+            background: #444654;
+        }
+
+        /* Input */
+        .input-area {
+            display: flex;
+            padding: 15px;
+            background: #202123;
+            border-top: 1px solid #444;
+        }
+
+        .input-area input {
+            flex: 1;
+            padding: 12px;
+            border-radius: 8px;
+            border: none;
+            outline: none;
+            font-size: 16px;
+        }
+
+        .input-area button {
+            margin-left: 10px;
+            padding: 12px 18px;
+            border: none;
+            background: #10a37f;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        .input-area button:hover {
+            background: #0e8c6d;
+        }
+
+        /* Animation */
+        @keyframes fadeIn {
+            from {opacity: 0; transform: translateY(5px);}
+            to {opacity: 1; transform: translateY(0);}
+        }
+
+        /* Status */
+        .status {
+            font-size: 12px;
+            color: #aaa;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="app">
+
+    <!-- Header -->
+    <div class="header">
+        <h2>🤖 RAG Assistant</h2>
+
+        <div class="upload">
+            <input type="file" id="fileInput">
+            <button onclick="uploadPDF()">Upload</button>
+            <span id="status" class="status"></span>
+        </div>
+    </div>
+
+    <!-- Chat -->
+    <div id="chat-box" class="chat-box"></div>
+
+    <!-- Input -->
+    <div class="input-area">
+        <input id="input" placeholder="Ask something about your PDF..." />
+        <button onclick="send()">➤</button>
+    </div>
+
+</div>
+
+<script>
+const API = "http://127.0.0.1:5000";
+
+async function uploadPDF() {
+    const file = document.getElementById("fileInput").files[0];
+    const status = document.getElementById("status");
+
+    if (!file) {
+        alert("Select a PDF first");
+        return;
+    }
+
+    status.innerText = "Uploading...";
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch(API + "/upload", {
+        method: "POST",
+        body: formData
+    });
+
+    const data = await res.json();
+    status.innerText = data.message || data.error;
+}
+
+async function send() {
+    const input = document.getElementById("input");
+    const text = input.value.trim();
+
+    if (!text) return;
+
+    addMessage(text, "user");
+    input.value = "";
+
+    showTyping();
+
+    try {
+        const res = await fetch(API + "/ask", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({query: text})
+        });
+
+        const data = await res.json();
+        removeTyping();
+
+        typeMessage(data.answer || data.error, "bot");
+
+    } catch (err) {
+        removeTyping();
+        addMessage("Server error", "bot");
+    }
+}
+
+function addMessage(text, sender) {
+    const box = document.getElementById("chat-box");
+
+    const msg = document.createElement("div");
+    msg.className = "message " + sender;
+
+    msg.innerHTML = `<div class="bubble">${text}</div>`;
+    box.appendChild(msg);
+
+    box.scrollTop = box.scrollHeight;
+}
+
+function showTyping() {
+    const box = document.getElementById("chat-box");
+
+    const typing = document.createElement("div");
+    typing.className = "message bot";
+    typing.id = "typing";
+
+    typing.innerHTML = `<div class="bubble">Typing...</div>`;
+    box.appendChild(typing);
+
+    box.scrollTop = box.scrollHeight;
+}
+
+function removeTyping() {
+    const typing = document.getElementById("typing");
+    if (typing) typing.remove();
+}
+
+function typeMessage(text, sender) {
+    const box = document.getElementById("chat-box");
+
+    const msg = document.createElement("div");
+    msg.className = "message " + sender;
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+
+    msg.appendChild(bubble);
+    box.appendChild(msg);
+
+    let i = 0;
+    function typing() {
+        if (i < text.length) {
+            bubble.innerHTML += text.charAt(i);
+            i++;
+            setTimeout(typing, 10);
+        }
+        box.scrollTop = box.scrollHeight;
+    }
+    typing();
+}
+
+// Enter key
+document.getElementById("input").addEventListener("keypress", function(e) {
+    if (e.key === "Enter") send();
+});
+</script>
+
+</body>
+</html>
