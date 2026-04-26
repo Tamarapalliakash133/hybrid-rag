@@ -7,3 +7,4 @@ langchain-text-splitters
 faiss-cpu
 pydantic
 gunicorn
+flask-cors
