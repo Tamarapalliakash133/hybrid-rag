@@ -7,7 +7,7 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not OPENAI_API_KEY:
-    raise ValueError("api-key is not set")
+    print("api-key is not set")
 
 
 from langchain_community.document_loaders import PyPDFLoader
@@ -80,7 +80,7 @@ def upload_pdf():
     loader = PyPDFLoader(filepath)
     documents = loader.load()
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=100)
     docs = splitter.split_documents(documents)
 
     # Embeddings + FAISS
