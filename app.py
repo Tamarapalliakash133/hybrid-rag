@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify, render_template
+from flask import Flask,request,jsonify,render_template
 from flask_cors import CORS
 
 from langchain_community.document_loaders import (
@@ -12,8 +12,8 @@ from langchain_text_splitters import (
 )
 
 from langchain_openai import (
-    OpenAIEmbeddings,
-    ChatOpenAI
+    ChatOpenAI,
+    OpenAIEmbeddings
 )
 
 from langchain_community.vectorstores import (
@@ -26,6 +26,14 @@ from langchain_community.retrievers import (
 
 from langchain_core.retrievers import (
     BaseRetriever
+)
+
+from sentence_transformers import (
+    CrossEncoder
+)
+
+from lettucedetect import (
+    TransformerDetector
 )
 
 from langchain_core.prompts import (
@@ -45,10 +53,6 @@ from langchain_core.runnables.history import (
     RunnableWithMessageHistory
 )
 
-from sentence_transformers import (
-    CrossEncoder
-)
-
 from pydantic import Field
 from typing import List
 
@@ -59,10 +63,10 @@ OPENAI_API_KEY=os.getenv(
 )
 
 if not OPENAI_API_KEY:
+
     raise Exception(
         "OPENAI_API_KEY missing"
     )
-
 
 
 app=Flask(__name__)
@@ -71,11 +75,12 @@ CORS(app)
 
 hybrid_retriever=None
 
-
-#memory using the sessions
-
 store={}
 
+
+################################################
+# MEMORY
+################################################
 
 def get_session_history(
     session_id:str
@@ -92,25 +97,44 @@ def get_session_history(
     ]
 
 
-#llm openai
+################################################
+# LLM
+################################################
 
 llm=ChatOpenAI(
 
     model="gpt-4o-mini",
 
     temperature=0
-
 )
 
+
+################################################
+# RERANKER
+################################################
 
 reranker=CrossEncoder(
-    "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+"cross-encoder/ms-marco-MiniLM-L-6-v2"
+
 )
 
 
-# =====================================
-# Ensemble Retriever
-# =====================================
+################################################
+# HALLUCINATION DETECTOR
+################################################
+
+hallu_detector=TransformerDetector(
+
+model_path=
+"KRLabsOrg/lettucedetect-roberta-base"
+
+)
+
+
+################################################
+# HYBRID RETRIEVER
+################################################
 
 class EnsembleRetriever(
     BaseRetriever
@@ -127,15 +151,15 @@ class EnsembleRetriever(
 
     def _get_relevant_documents(
         self,
-        query:str
+        query
     ):
 
         seen={}
 
+
         for retriever,weight in zip(
 
             self.retrievers,
-
             self.weights
 
         ):
@@ -144,9 +168,11 @@ class EnsembleRetriever(
                 query
             )
 
+
             for doc in docs:
 
                 key=doc.page_content
+
 
                 if key not in seen:
 
@@ -159,19 +185,21 @@ class EnsembleRetriever(
 
                     seen[key]=(
 
-                        seen[key][0],
+                    seen[key][0],
 
-                        seen[key][1]+weight
+                    seen[key][1]+weight
+
                     )
 
 
-        sorted_docs=sorted(
+        ranked=sorted(
 
             seen.values(),
 
             key=lambda x:x[1],
 
             reverse=True
+
         )
 
 
@@ -179,68 +207,76 @@ class EnsembleRetriever(
 
             doc
 
-            for doc,_ in sorted_docs
+            for doc,_ in ranked
 
         ]
 
 
+################################################
+# QUERY REFINER
+################################################
 
+refiner_prompt=(
 
-refine_prompt=(
-    ChatPromptTemplate
-    .from_template("""
+ChatPromptTemplate
+.from_template(
 
-Rewrite only if needed.
+"""
 
-Preserve meaning.
+Rewrite only if required.
 
-Resolve:
+Resolve references:
 
 it
-that
 this
-previous topic
+that
 
 Question:
 
 {question}
 
-""")
+"""
+
+)
+
 )
 
 
 query_refiner=(
 
-    refine_prompt
-
-    |llm
-
-    |StrOutputParser()
+refiner_prompt
+|llm
+|StrOutputParser()
 
 )
 
 
 def should_refine(query):
 
+    query=query.lower()
+
     words=[
 
         "it",
         "that",
         "this",
-        "tell",
-        "explain"
+        "explain",
+        "tell"
 
     ]
 
-    query=query.lower()
-
     return any(
+
         x in query
+
         for x in words
+
     )
 
 
-
+################################################
+# ANSWER PROMPT
+################################################
 
 answer_prompt=(
 
@@ -253,44 +289,49 @@ ChatPromptTemplate
 
 """
 
-You are a helpful assistant.
+You are an intelligent PDF assistant.
+
+Rules:
 
 Use PDF context first.
 
-If answer exists in PDF:
-answer using PDF.
+Never invent facts.
 
-If answer is not in PDF:
-answer from AI knowledge.
+If context insufficient:
+
+Use AI knowledge.
 
 Mention:
 
 (Generated from AI knowledge)
 
-Give detailed answers.
+If confidence low:
+
+Say:
+
+Information unavailable.
 
 
-PDF Context:
+Context:
 
 {context}
+
+Confidence:
+
+{confidence}
 
 """
 
 ),
 
 MessagesPlaceholder(
-
 variable_name=
 "history"
-
 ),
 
 (
-
 "human",
-
 "{question}"
-
 )
 
 ])
@@ -298,7 +339,9 @@ variable_name=
 )
 
 
-
+################################################
+# DOC FORMATTER
+################################################
 
 def format_docs(docs):
 
@@ -311,16 +354,19 @@ def format_docs(docs):
     ])
 
 
-
+################################################
+# RERANK
+################################################
 
 def rerank(
-    query,
-    docs
+query,
+docs
 ):
+
 
     if not docs:
 
-        return [],0.0
+        return [],0
 
 
     pairs=[
@@ -347,10 +393,11 @@ def rerank(
         key=lambda x:x[1],
 
         reverse=True
+
     )
 
 
-    top_docs=[
+    top=[
 
         doc
 
@@ -359,50 +406,65 @@ def rerank(
     ]
 
 
-    top_scores=sorted(
-
-        scores,
-
-        reverse=True
-
-    )[:3]
-
-
     confidence=float(
 
-        sum(top_scores)
-
-        /
-
-        len(top_scores)
+        sum(
+            sorted(
+                scores,
+                reverse=True
+            )[:3]
+        )/3
 
     )
 
 
     return(
-
-        top_docs,
-
+        top,
         confidence
-
     )
 
 
-@app.route("/")
-def home():
+################################################
+# HALLUCINATION CHECK
+################################################
 
-    return render_template(
-        "index.html"
-    )
+def detect_hallucination(
+
+question,
+context,
+answer
+
+):
 
 
-# =====================================
-# Upload PDF
-# =====================================
+    try:
+
+        result=hallu_detector.detect(
+
+            question=question,
+
+            context=context,
+
+            answer=answer
+
+        )
+
+        return result[
+            "score"
+        ]
+
+    except:
+
+        return 0
+
+
+################################################
+# PDF UPLOAD
+################################################
 
 @app.route(
-    "/upload",
-    methods=["POST"]
+"/upload",
+methods=["POST"]
 )
 
 def upload_pdf():
@@ -420,22 +482,18 @@ def upload_pdf():
         return jsonify({
 
             "error":
-            "No PDF uploaded"
+            "No pdf"
 
-        }),400
-
-
-    filepath=(
-        f"temp_{file.filename}"
-    )
+        })
 
 
-    file.save(
-        filepath
-    )
+    filepath=f"temp_{file.filename}"
+
+    file.save(filepath)
 
 
     try:
+
 
         loader=PyPDFLoader(
             filepath
@@ -445,117 +503,101 @@ def upload_pdf():
 
 
         splitter=(
-            RecursiveCharacterTextSplitter(
 
-                chunk_size=1500,
+        RecursiveCharacterTextSplitter(
 
-                chunk_overlap=300
+            chunk_size=700,
 
-            )
+            chunk_overlap=150
+
         )
-
-
-        docs=(
-            splitter
-            .split_documents(
-                documents
-            )
-        )
-
-
-        embeddings=(
-            OpenAIEmbeddings(
-
-                model=
-                "text-embedding-3-small"
-
-            )
-        )
-
-
-        vectorstore=(
-            FAISS.from_documents(
-
-                docs,
-
-                embeddings
-
-            )
-        )
-
-
-        vector_retriever=(
-
-            vectorstore
-            .as_retriever(
-
-                search_kwargs={
-
-                    "k":15
-
-                }
-
-            )
 
         )
 
 
-        bm25=(
-            BM25Retriever
-            .from_documents(
-                docs
-            )
+        docs=splitter.split_documents(
+            documents
         )
 
 
-        bm25.k=15
+        embeddings=OpenAIEmbeddings(
+
+            model=
+            "text-embedding-3-small"
+
+        )
 
 
-        hybrid_retriever=(
-            EnsembleRetriever(
+        vectorstore=FAISS.from_documents(
 
-                retrievers=[
+            docs,
 
-                    vector_retriever,
+            embeddings
 
-                    bm25
+        )
 
-                ],
 
-                weights=[
+        dense=vectorstore.as_retriever(
 
-                    0.7,
+            search_kwargs={
 
-                    0.3
+                "k":30,
 
-                ]
+                "fetch_k":60
 
-            )
+            }
+
+        )
+
+
+        sparse=BM25Retriever.from_documents(
+            docs
+        )
+
+        sparse.k=30
+
+
+        hybrid_retriever=EnsembleRetriever(
+
+            retrievers=[
+
+                dense,
+                sparse
+
+            ],
+
+            weights=[
+
+                0.7,
+                0.3
+
+            ]
+
         )
 
 
         return jsonify({
 
             "message":
-            "PDF uploaded successfully"
+            "uploaded"
 
         })
 
 
     finally:
 
-        if os.path.exists(
+        os.remove(
             filepath
-        ):
+        )
 
-            os.remove(
-                filepath
-            )
 
+################################################
+# ASK
+################################################
 
 @app.route(
-    "/ask",
-    methods=["POST"]
+"/ask",
+methods=["POST"]
 )
 
 def ask():
@@ -564,13 +606,13 @@ def ask():
 
     try:
 
-        data=request.get_json()
+        data=request.json
 
         query=data.get(
             "query"
         )
 
-        session_id=data.get(
+        session=data.get(
             "session_id",
             "default"
         )
@@ -580,78 +622,63 @@ def ask():
 
             return jsonify({
 
-                "error":
-                "Question missing"
+            "error":
+            "missing question"
 
-            }),400
+            })
 
 
-        refined_query=query
+        refined=query
 
 
         if should_refine(query):
 
-            refined_query=(
-                query_refiner.invoke({
+            refined=query_refiner.invoke({
 
-                    "question":
-                    query
+                "question":
+                query
 
-                })
-            )
+            })
 
 
         context=""
-
-        source="AI Knowledge"
 
         confidence=0
 
 
         if hybrid_retriever:
 
-            docs=(
-                hybrid_retriever
-                .invoke(
-                    refined_query
-                )
+
+            docs=hybrid_retriever.invoke(
+                refined
             )
 
 
-            docs,confidence=(
-                rerank(
-                    refined_query,
-                    docs
-                )
+            docs,confidence=rerank(
+
+                refined,
+                docs
+
             )
 
 
-            if docs:
-
-                context=(
-                    format_docs(
-                        docs
-                    )
-                )
-
-                source="PDF"
+            context=format_docs(
+                docs
+            )
 
 
+        chain=(
 
-        base_chain=(
-
-            answer_prompt
-
-            |llm
-
-            |StrOutputParser()
+        answer_prompt
+        |llm
+        |StrOutputParser()
 
         )
 
 
         chain=RunnableWithMessageHistory(
 
-            base_chain,
+            chain,
 
             get_session_history,
 
@@ -666,48 +693,80 @@ def ask():
 
         answer=chain.invoke(
 
-            {
+        {
 
-                "context":
-                context,
+            "question":
+            refined,
 
-                "question":
-                refined_query
+            "context":
+            context,
 
-            },
+            "confidence":
+            confidence
 
-            config={
+        },
 
-                "configurable":{
+        config={
 
-                    "session_id":
-                    session_id
+        "configurable":{
 
-                }
+        "session_id":
+        session
 
-            }
+        }
+
+        }
 
         )
 
 
+        hallu_score=0
+
+
+        if context:
+
+            hallu_score=detect_hallucination(
+
+                refined,
+
+                context,
+
+                answer
+
+            )
+
+
+        if hallu_score>.7:
+
+            answer="""
+Potential hallucination detected.
+
+I couldn't verify this answer
+from PDF context.
+
+Upload more information.
+"""
+
+
         return jsonify({
 
-            "answer":
-            answer,
+        "answer":
+        answer,
 
-            "source":
-            source,
+        "confidence":
+        round(
+            confidence,
+            2
+        ),
 
-            "confidence":
-            float(
-                round(
-                    confidence,
-                    2
-                )
-            ),
+        "hallucination":
+        round(
+            hallu_score,
+            2
+        ),
 
-            "refined_query":
-            refined_query
+        "refined":
+        refined
 
         })
 
@@ -716,11 +775,10 @@ def ask():
 
         return jsonify({
 
-            "error":
-            str(e)
+        "error":
+        str(e)
 
-        }),500
-
+        })
 
 
 if __name__=="__main__":
