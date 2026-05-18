@@ -157,7 +157,7 @@
 </div>
 
 <script>
-const API = "";
+const API="http://127.0.0.1:5000";
 
 async function uploadPDF() {
     const file = document.getElementById("fileInput").files[0];
@@ -182,47 +182,111 @@ async function uploadPDF() {
     status.innerText = data.message || data.error;
 }
 
-async function send() {
-    const input = document.getElementById("input");
-    const text = input.value.trim();
+async function send(){
 
-    if (!text) return;
+    const input=
+    document.getElementById(
+        "input"
+    );
 
-    addMessage(text, "user");
-    input.value = "";
+    const text=
+    input.value.trim();
+
+    if(!text)return;
+
+    addMessage(
+        text,
+        "user"
+    );
+
+    input.value="";
 
     showTyping();
 
-    try {
-        const res = await fetch(API + "/ask", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({query: text})
-        });
+    try{
 
-        const data = await res.json();
+        const res=
+        await fetch(
+            API+"/ask",
+            {
+
+                method:"POST",
+
+                headers:{
+
+                    "Content-Type":
+                    "application/json"
+
+                },
+
+                body:JSON.stringify({
+
+                    query:text
+
+                })
+
+            }
+        );
+
+        const data=
+        await res.json();
+
         removeTyping();
 
-        typeMessage(data.answer || data.error, "bot");
 
-    } catch (err) {
-        removeTyping();
-        addMessage("Server error", "bot");
+        if(data.error){
+
+            typeMessage(
+                data.error,
+                "bot"
+            );
+
+            return;
+        }
+
+
+        if(data.refined_query){
+
+            addMessage(
+
+                "Refined: "
+                +data.refined_query,
+
+                "bot"
+
+            );
+        }
+
+
+        addMessage(
+
+            "Confidence: "
+            +data.confidence,
+
+            "bot"
+
+        );
+
+
+        typeMessage(
+            data.answer,
+            "bot"
+        );
+
     }
+
+    catch(e){
+
+        removeTyping();
+
+        typeMessage(
+            "Server Error",
+            "bot"
+        );
+
+    }
+
 }
-
-function addMessage(text, sender) {
-    const box = document.getElementById("chat-box");
-
-    const msg = document.createElement("div");
-    msg.className = "message " + sender;
-
-    msg.innerHTML = `<div class="bubble">${text}</div>`;
-    box.appendChild(msg);
-
-    box.scrollTop = box.scrollHeight;
-}
-
 function showTyping() {
     const box = document.getElementById("chat-box");
 
@@ -265,6 +329,23 @@ function typeMessage(text, sender) {
     typing();
 }
 
+function addMessage(text, sender) {
+    const box = document.getElementById("chat-box");
+
+    const msg = document.createElement("div");
+    msg.className = "message " + sender;
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+
+    bubble.innerText = text;
+
+    msg.appendChild(bubble);
+
+    box.appendChild(msg);
+
+    box.scrollTop = box.scrollHeight;
+}
 // Enter key
 document.getElementById("input").addEventListener("keypress", function(e) {
     if (e.key === "Enter") send();
